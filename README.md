@@ -173,90 +173,362 @@ haproxy -v                          # HAProxy 버전 확인
 nginx -v                            # Nginx 버전 확인
 ```
 
-### 2-1. HAProxy 설정
 
-**설정 파일:** `/etc/haproxy/haproxy.cfg`
+# ============================================================
+# 2-1. HAProxy 설치 및 로드밸런싱 설정
+# 작업 서버: 192.168.56.101 (HAProxy / Nginx LB)
+# ============================================================
 
-```bash
-# 기존 설정 파일 백업 (있을 때만)
-[ ! -f /etc/haproxy/haproxy.cfg ] || cp -a /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.bak
+# [서버 구성]
+# HAProxy : 192.168.56.101:80
+# WEB1    : 192.168.56.103:80
+# WEB2    : 192.168.56.104:80
+# WEB3    : 192.168.56.105:80
 
-# 설정 파일 작성
+# [동작 흐름]
+# 클라이언트 → HAProxy Frontend(:80)
+#            → ACL 조건 검사
+#            → Backend 선택
+#            → 로드밸런싱 알고리즘 적용
+#            → WEB1 / WEB2 / WEB3
+#            → HAProxy를 통해 클라이언트로 응답 반환
+
+
+# ------------------------------------------------------------
+# 1. HAProxy 설치
+# ------------------------------------------------------------
+
+# HAProxy 패키지 설치
+dnf install -y haproxy
+
+# 설치 버전 확인
+haproxy -v
+
+
+# ------------------------------------------------------------
+# 2. 기존 설정 파일 백업
+# ------------------------------------------------------------
+
+# 설정 파일이 존재하면 .bak 파일로 백업
+# 기존 설정을 복원할 때 사용
+[ ! -f /etc/haproxy/haproxy.cfg ] || \
+cp -a /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.bak
+
+
+# ------------------------------------------------------------
+# 3. HAProxy 설정 파일 작성
+# ------------------------------------------------------------
+
+# cat > : 지정한 파일에 내용을 기록 (기존 내용 덮어쓰기)
+# <<'EOF_HAPROXY' : 아래 내용을 종료 표시까지 그대로 입력
+# root 권한으로 실행해야 함
+
 cat > /etc/haproxy/haproxy.cfg <<'EOF_HAPROXY'
+
+# ============================================================
+# [GLOBAL] HAProxy 전체 프로세스 설정
+# ============================================================
+
 global
+    # HAProxy 로그를 로컬 syslog로 전달
+    # local0는 로그 분류에 사용하는 facility
     log 127.0.0.1 local0
+
+    # HAProxy의 전체 동시 연결 수 제한
     maxconn 4000
 
+
+# ============================================================
+# [DEFAULTS] Frontend/Backend에 공통으로 적용할 기본값
+# ============================================================
+
 defaults
+    # global에 정의한 로그 설정 사용
     log global
+
+    # HTTP 요청을 처리하는 L7 모드
     mode http
+
+    # HTTP 요청 정보를 포함하는 로그 형식
     option httplog
+
+    # 데이터가 전송되지 않은 연결의 로그 생략
     option dontlognull
+
+    # 백엔드 서버 연결 시도 제한 시간
     timeout connect 5s
+
+    # 클라이언트 측 비활성 연결 타임아웃
     timeout client 30s
+
+    # 백엔드 서버 측 비활성 연결 타임아웃
     timeout server 30s
 
+
+# ============================================================
+# [FRONTEND] 클라이언트 요청을 받는 영역
+# ============================================================
+
 frontend web_front
+
+    # HAProxy가 요청을 받을 IP와 TCP 포트
+    # 192.168.56.101의 80번 포트에서 HTTP 요청 수신
     bind 192.168.56.101:80
 
-    # URL 예: /?algo=roundrobin /?algo=weighted /?algo=leastconn /?algo=source
-    acl algo_rr       url_param(algo) -m str roundrobin
-    acl algo_weighted url_param(algo) -m str weighted
-    acl algo_least    url_param(algo) -m str leastconn
-    acl algo_source   url_param(algo) -m str source
+    # --------------------------------------------------------
+    # ACL (Access Control List)
+    # HTTP 요청 URL의 algo 파라미터를 검사
+    #
+    # 접속 예시:
+    # http://192.168.56.101/?algo=roundrobin
+    # http://192.168.56.101/?algo=weighted
+    # http://192.168.56.101/?algo=leastconn
+    # http://192.168.56.101/?algo=source
+    #
+    # url_param(algo) : URL에서 algo 파라미터 값 추출
+    # -m str          : 문자열 비교
+    # --------------------------------------------------------
 
+    # algo=roundrobin이면 algo_rr 조건 충족
+    acl algo_rr url_param(algo) -m str roundrobin
+
+    # algo=weighted이면 algo_weighted 조건 충족
+    acl algo_weighted url_param(algo) -m str weighted
+
+    # algo=leastconn이면 algo_least 조건 충족
+    acl algo_least url_param(algo) -m str leastconn
+
+    # algo=source이면 algo_source 조건 충족
+    acl algo_source url_param(algo) -m str source
+
+
+    # --------------------------------------------------------
+    # ACL 조건에 따라 Backend 선택
+    # --------------------------------------------------------
+
+    # algo=weighted → 가중치 기반 Backend
     use_backend be_weighted if algo_weighted
+
+    # algo=leastconn → 최소 연결 Backend
     use_backend be_leastconn if algo_least
+
+    # algo=source → 출발지 IP 기반 Backend
     use_backend be_source if algo_source
+
+    # algo=roundrobin → 순차 분산 Backend
     use_backend be_roundrobin if algo_rr
+
+    # URL에 algo가 없거나 조건에 맞지 않으면
+    # 기본 Round Robin Backend 사용
     default_backend be_roundrobin
 
+
+# ============================================================
+# [BACKEND 1] Round Robin
+# ============================================================
+
 backend be_roundrobin
+
+    # 요청을 WEB1 → WEB2 → WEB3 순서로 분산
+    # 서버가 모두 정상이고 가중치가 같다는 조건
     balance roundrobin
+
+    # GET / 요청으로 백엔드의 HTTP 상태 검사
     option httpchk GET /
+
+    # 웹 서버 등록
+    # check : 정기적인 상태 검사 활성화
     server web1 192.168.56.103:80 check
     server web2 192.168.56.104:80 check
     server web3 192.168.56.105:80 check
 
+
+# ============================================================
+# [BACKEND 2] Weighted Round Robin
+# ============================================================
+
 backend be_weighted
+
+    # Round Robin에 서버별 가중치를 적용
     balance roundrobin
+
+    # HTTP 상태 검사
     option httpchk GET /
+
+    # weight 값으로 요청 분산 비중 설정
+    #
+    # WEB1 = 5
+    # WEB2 = 3
+    # WEB3 = 1
+    #
+    # 총 가중치 = 9
+    #
+    # 장기적으로 대략 5:3:1 비율로 분산
+    # 정확한 요청 순서나 짧은 구간의 횟수는 달라질 수 있음
+
     server web1 192.168.56.103:80 check weight 5
     server web2 192.168.56.104:80 check weight 3
     server web3 192.168.56.105:80 check weight 1
 
+
+# ============================================================
+# [BACKEND 3] Least Connections
+# ============================================================
+
 backend be_leastconn
+
+    # 현재 연결 수가 상대적으로 적은 서버 선택
+    # 연결 유지 시간이 길거나 부하가 달라지는 환경에 활용
     balance leastconn
+
+    # HTTP 상태 검사
     option httpchk GET /
+
     server web1 192.168.56.103:80 check
     server web2 192.168.56.104:80 check
     server web3 192.168.56.105:80 check
+
+
+# ============================================================
+# [BACKEND 4] Source Hash
+# ============================================================
 
 backend be_source
+
+    # 클라이언트 출발지 IP를 기반으로 서버 선택
+    # 동일 IP는 서버 구성과 상태가 같다면
+    # 동일 백엔드로 전달되는 경향이 있음
     balance source
+
+    # HTTP 상태 검사
     option httpchk GET /
+
     server web1 192.168.56.103:80 check
     server web2 192.168.56.104:80 check
     server web3 192.168.56.105:80 check
 
-# 실습용 통계 대시보드. 배포 전 인증정보 변경 및 접근 제한 필요
+    # 주의!
+    # NAT에서 MASQUERADE가 적용되면
+    # HAProxy가 여러 클라이언트를
+    # 동일한 NAT 출발지 IP로 인식할 수 있음
+
+
+# ============================================================
+# [STATS] HAProxy 통계 모니터링 대시보드
+# ============================================================
+
 listen stats
+
+    # 9000번 포트로 통계 페이지 제공
+    # * 는 서버의 모든 IPv4 인터페이스를 의미
     bind *:9000
+
+    # 통계 페이지 기능 활성화
     stats enable
+
+    # / 경로로 접속 시 통계 화면 제공
     stats uri /
+
+    # 브라우저에서 5초마다 통계 갱신
     stats refresh 5s
+
+    # 통계 화면에 노드 정보 표시
     stats show-node
+
+    # 통계 페이지 HTTP Basic 인증 설정
+    # 아래 비밀번호는 실제 사용할 값으로 변경
     stats auth admin:CHANGE_ME_STRONG_PASSWORD
+
 EOF_HAPROXY
 
-# HAProxy 설정 검사 후 실행
-haproxy -c -f /etc/haproxy/haproxy.cfg  # 문법 검사
-systemctl enable --now haproxy         # 시작 및 자동 시작
-systemctl is-active haproxy            # active 확인
-ss -nltp | grep -E ':80|:9000'        # 수신 포트 확인
-```
 
-> **원본 설정 대비 필수 수정:** 보내 준 HAProxy 설정의 `be_weighted`, `be_leastconn`, `be_source`에 있던 `192.168.0.103~105`는 실제 WEB 서버망인 **`192.168.56.103~105`**로 수정했습니다. 원본 `stats auth admin:1234`는 GitHub 공개 README에 그대로 두기 위험하므로 예시 비밀번호를 교체했습니다.
+# ------------------------------------------------------------
+# 4. HAProxy 설정 문법 검사
+# ------------------------------------------------------------
+
+# 설정 파일 문법 및 기본 구성 검증
+haproxy -c -f /etc/haproxy/haproxy.cfg
+
+# 정상 예시:
+# Configuration file is valid
+
+
+# ------------------------------------------------------------
+# 5. HAProxy 실행 및 자동 시작
+# ------------------------------------------------------------
+
+# HAProxy 실행 및 부팅 시 자동 실행
+systemctl enable --now haproxy
+
+# 기존 실행 중인 HAProxy의 설정을 수정한 경우
+# 문법 검사 후 재시작하거나 reload 적용 필요
+systemctl reload haproxy
+
+
+# ------------------------------------------------------------
+# 6. 서비스 상태 확인
+# ------------------------------------------------------------
+
+# active면 정상 실행 중
+systemctl is-active haproxy
+
+# 자세한 상태 확인
+systemctl status haproxy
+
+
+# ------------------------------------------------------------
+# 7. HAProxy 포트 확인
+# ------------------------------------------------------------
+
+# 80   : 로드밸런서
+# 9000 : 통계 페이지
+ss -nltp | grep -E ':80|:9000'
+
+
+# ------------------------------------------------------------
+# 8. WEB 서버 정상 연결 확인
+# ------------------------------------------------------------
+
+# WEB1
+curl -I http://192.168.56.103
+
+# WEB2
+curl -I http://192.168.56.104
+
+# WEB3
+curl -I http://192.168.56.105
+
+# 모두 HTTP 200 OK가 나오는지 확인
+
+
+# ------------------------------------------------------------
+# 9. HAProxy 알고리즘별 테스트
+# ------------------------------------------------------------
+
+# Round Robin
+curl 'http://192.168.56.101/?algo=roundrobin'
+
+# Weighted Round Robin
+curl 'http://192.168.56.101/?algo=weighted'
+
+# Least Connections
+curl 'http://192.168.56.101/?algo=leastconn'
+
+# Source Hash
+curl 'http://192.168.56.101/?algo=source'
+
+
+# ------------------------------------------------------------
+# 10. HAProxy 통계 페이지 접속
+# ------------------------------------------------------------
+
+# 브라우저에서 접속
+# http://192.168.56.101:9000/
+#
+# 설정한 관리자 계정으로 로그인
+# WEB1, WEB2, WEB3 상태 및 연결 통계 확인
+#
+# 다른 PC에서 접속하려면 9000/tcp 방화벽 허용 필요
 
 ### 2-2. Nginx 기본 설정 (`/etc/nginx/nginx.conf`)
 
@@ -357,10 +629,34 @@ getsebool httpd_can_network_connect
 # 백엔드 연결 시 Permission denied가 나오고 값이 off인 경우 실행
 setsebool -P httpd_can_network_connect on
 
-# LB 서버의 firewalld에서 8080 허용
-firewall-cmd --permanent --add-port=8080/tcp
-firewall-cmd --reload
-firewall-cmd --list-ports
+
+# ==================================================
+# Nginx LB 서버 HTTP 8080 포트 허용 (iptables)
+# 실행 위치: HAProxy + Nginx 서버 (192.168.56.101)
+# ==================================================
+
+# 1. firewalld 실행 상태 확인
+systemctl is-active firewalld
+
+# 2. 현재 INPUT 방화벽 규칙 확인
+iptables -L INPUT -n -v --line-numbers
+
+# 3. Nginx LB의 8080/tcp 포트 허용
+# 동일한 허용 규칙이 없는 경우에만 추가
+iptables -C INPUT -p tcp --dport 8080 -j ACCEPT 2>/dev/null || \
+iptables -I INPUT 1 -p tcp --dport 8080 -j ACCEPT
+
+# 4. 추가된 방화벽 규칙 확인
+iptables -L INPUT -n -v --line-numbers
+
+# 5. Nginx가 8080 포트에서 대기 중인지 확인
+ss -nltp | grep ':8080'
+
+# 6. HTTP 응답 확인
+curl -I http://192.168.56.101:8080
+
+# 정상 결과: HTTP/1.1 200 OK
+
 
 # 설정 검사·실행
 nginx -t
