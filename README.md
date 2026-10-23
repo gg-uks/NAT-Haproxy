@@ -125,11 +125,34 @@ EOF_HTML
 # 1-4-3. 파일 SELinux 컨텍스트 복원
 restorecon -v /usr/share/nginx/html/index.html
 
-# 1-4-4. HTTP 방화벽 열기 (firewalld 사용 시)
-systemctl is-active firewalld              # 방화벽 실행 상태 확인
-firewall-cmd --permanent --add-service=http # TCP 80 서비스 허용
-firewall-cmd --reload                      # 정책 반영
-firewall-cmd --list-services               # http 포함 여부 확인
+
+# 1-4-4. HTTP 방화벽 허용 (iptables)
+# 실행 서버: WEB1, WEB2, WEB3 각각
+
+# 1. 현재 INPUT 방화벽 규칙 확인
+iptables -L INPUT -n -v --line-numbers
+
+# 2. HTTP 80/tcp 허용 규칙이 없는 경우 추가
+iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || \
+iptables -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+
+# 3. HTTP 방화벽 허용 여부 확인
+iptables -L INPUT -n -v --line-numbers
+
+# 4. 웹 서버 실행 상태 확인
+systemctl is-active nginx
+
+# 5. 웹 서버 자체 HTTP 응답 확인
+curl -I http://127.0.0.1
+
+# 6. 로드밸런서(192.168.56.101)에서 확인
+# 아래 명령어는 Nginx/HAProxy LB 서버에서 실행
+curl -I http://192.168.56.103
+curl -I http://192.168.56.104
+curl -I http://192.168.56.105
+
+# 정상 결과: HTTP/1.1 200 OK
+
 
 # 1-4-5. 각 서버가 자신의 번호를 출력하는지 확인
 curl -s http://127.0.0.1/ | grep 'WEB SERVER'
