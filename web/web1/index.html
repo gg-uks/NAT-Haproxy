@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HAProxy 실습 - WEB SERVER 1</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: radial-gradient(ellipse at top, #1d2b49 0%, #0b1020 58%, #070a12 100%);
+      color: #f4f7fb; padding: 24px;
+    }
+    main {
+      width: min(720px, 100%); padding: clamp(28px, 6vw, 56px);
+      border: 1px solid #ffffff20; border-radius: 28px;
+      background: #111827d9; box-shadow: 0 24px 80px #0008;
+    }
+    .eyebrow { color: #a9b7d0; letter-spacing: .16em; text-transform: uppercase; font-size: 12px; font-weight: 700; }
+    h1 { font-size: clamp(32px, 6vw, 52px); line-height: 1.08; margin: 14px 0; }
+    .server { display: inline-flex; align-items: center; gap: 10px; margin: 18px 0 8px; padding: 10px 15px; border-radius: 999px; background: #5eead420; border: 1px solid #5eead480; color: #5eead4; font-weight: 800; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #5eead4; box-shadow: 0 0 14px #5eead4; }
+    p { color: #b8c3d6; line-height: 1.7; }
+    .info { margin-top: 28px; padding: 18px 20px; border-radius: 16px; background: #ffffff08; border: 1px solid #ffffff12; }
+    .info strong { display: block; color: #fff; margin-bottom: 6px; }
+    .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-top: 28px; color: #8290a8; font-size: 13px; }
+    button { border: 0; border-radius: 12px; padding: 12px 16px; background: #f4f7fb; color: #101827; font-weight: 800; cursor: pointer; }
+    button:hover { opacity: .88; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">Load Balancing Lab · HAProxy</div>
+    <h1>웹 서버<br>정상 응답 중</h1>
+    <div class="server"><span class="dot"></span>WEB SERVER 1 · WEB-01</div>
+    <p>이 페이지는 첫 번째 웹 서버에서 제공하는 실습용 페이지입니다. HAProxy를 통해 접속했을 때 이 화면이 보이면 WEB-01이 응답한 것입니다.</p>
+    <section class="info">
+      <strong>현재 응답한 서버</strong>
+      <span>WEB SERVER 1 (WEB-01)</span>
+    </section>
+    <div class="row">
+      <span>응답 확인 시간: <span id="time">-</span></span>
+      <button onclick="location.reload()">새로고침 테스트</button>
+    </div>
+  </main>
+  <script>
+    document.getElementById("time").textContent = new Date().toLocaleString("ko-KR");
+  </script>
+</body>
+</html>
+
