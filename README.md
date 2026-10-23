@@ -598,17 +598,10 @@ iptables -t nat -L -n -v --line-numbers
 iptables -L FORWARD -n -v --line-numbers
 ```
 
-## 6. 완료 체크리스트
-
-- [ ] VM 5대의 NIC, IP, Host-Only 연결 및 인터넷 설치 경로 확인
-- [ ] WEB1~3의 HTML에 서로 다른 `WEB SERVER` 번호가 표시됨
-- [ ] LB에서 WEB1~3에 직접 HTTP 200 확인
-- [ ] HAProxy `:80`, Nginx LB `:8080`, Nginx 로컬 `127.0.0.1:8081`에서 정상 동작
-- [ ] HAProxy 4개 backend의 IP가 모두 `192.168.56.103~105`로 일치
-- [ ] Nginx 4개 upstream 및 알고리즘별 응답 헤더 확인
-- [ ] NAT DNAT 80/8080, FORWARD, MASQUERADE 확인
-- [ ] 다른 PC에서 NAT 외부 IP 80/8080으로 접속 성공
-- [ ] 장애 테스트 후 WEB3 서비스 복구 확인
+## 6. 부하 테스트
+sudo dnf install epel-release
+sudo dnf install stress stress-ng
+stress -c 4 --timeout 60
 - [ ] stats 인증 비밀번호 변경, 관리 페이지 접근 제한
 
 **보안/운영 주의:** 이 문서는 로컬 실습용으로 작성되었습니다. 실서비스에서는 암호화(HTTPS), 접근 통제, syslog 구성, 상태 검사, 방화벽 규칙 영구 관리 및 로드밸런서 이중화를 추가로 설계해야 합니다.
