@@ -522,6 +522,17 @@ done | sort | uniq -c
 ### 4-3. Nginx 4가지 알고리즘 테스트 (LB VM)
 
 ```bash
+for algo in roundrobin weighted leastconn source; do
+    echo "===== Nginx: ${algo} ====="
+
+    for i in {1..9}; do
+        curl -s --max-time 5 \
+        "http://192.168.56.101:8080/?algo=${algo}" \
+        | grep -o 'WEB SERVER [123] · WEB-0[123]' \
+        | head -1
+    done
+done
+
 # 헤더에 선택한 그룹 및 실제 대상 서버가 출력됨
 for algo in roundrobin weighted leastconn source; do
     echo "===== Nginx: ${algo} ====="
