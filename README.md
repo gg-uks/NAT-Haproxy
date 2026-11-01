@@ -609,6 +609,49 @@ iptables -t nat -L -n -v --line-numbers
 iptables -L FORWARD -n -v --line-numbers
 ```
 
+---
+
+## 5. iptables 규칙
+
+```bash
+
+# 1. DNAT
+iptables -t nat -A PREROUTING -i enp0s3 -p tcp -d 192.168.0.235 --dport 80 -j DNAT --to-destination 192.168.56.101:80
+
+# 2. SNAT
+iptables -t nat -A POSTROUTING -s 192.168.56.101/32 -o enp0s3 -j SNAT --to-source 192.168.0.235
+
+# 3. MASQUERADE
+iptables -t nat -A POSTROUTING -s 192.168.56.0/24 -o enp0s3 -j MASQUERADE
+
+# 4. 정적 NAT (192.168.0.236 사용 가능 시)
+iptables -t nat -A PREROUTING -i enp0s3 -d 192.168.0.236 -j DNAT --to-destination 192.168.56.101
+iptables -t nat -A POSTROUTING -s 192.168.56.101/32 -o enp0s3 -j SNAT --to-source 192.168.0.236
+
+# 5. 동적 NAT (192.168.0.236~238 주소 풀 사용 가능 시)
+iptables -t nat -A POSTROUTING -s 192.168.56.0/24 -o enp0s3 -j SNAT --to-source 192.168.0.236-192.168.0.238
+
+# IP 포워딩 활성화
+sysctl -w net.ipv4.ip_forward=1
+
+# 규칙 확인
+iptables -t nat -L -n -v
+iptables -L FORWARD -n -v
+
+# 패킷 확인
+tcpdump -ni enp0s3 'tcp port 80'
+tcpdump -ni enp0s8 'host 192.168.56.101 and tcp port 80'
+
+# 규칙 삭제 예시
+iptables -t nat -D PREROUTING -i enp0s3 -p tcp -d 192.168.0.235 --dport 80 -j DNAT --to-destination 192.168.56.101:80
+iptables -t nat -D POSTROUTING -s 192.168.56.101/32 -o enp0s3 -j SNAT --to-source 192.168.0.235
+iptables -t nat -D POSTROUTING -s 192.168.56.0/24 -o enp0s3 -j MASQUERADE
+iptables -t nat -D PREROUTING -i enp0s3 -d 192.168.0.235 -j DNAT --to-destination 192.168.56.101
+iptables -t nat -D POSTROUTING -s 192.168.56.101/32 -o enp0s3 -j SNAT --to-source 192.168.0.235
+iptables -t nat -D POSTROUTING -s 192.168.56.0/24 -o enp0s3 -j SNAT --to-source 192.168.0.236-192.168.0.238
+
+```
+
 ## 6. 부하 테스트
 sudo dnf install epel-release
 sudo dnf install stress stress-ng
