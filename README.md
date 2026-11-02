@@ -981,6 +981,69 @@ rate(node_network_transmit_bytes_total{instance="192.168.56.101:9100",device!="l
 rate(node_network_transmit_bytes_total{instance=~"192.168.56.10[3-5]:9100",device!="lo"}[1m])
 ```
 
+
+- 프로메테우스 파일 올릴것들
+
+1. prometheus.yml (Prometheus 서버 102)
+
+```jsx
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  - job_name: "linux_servers"
+    static_configs:
+      - targets:
+          - "192.168.56.100:9100"
+          - "192.168.56.101:9100"
+          - "192.168.56.103:9100"
+          - "192.168.56.104:9100"
+          - "192.168.56.105:9100"
+```
+
+2. prometheus.service (Prometheus 서버 102)
+
+```jsx
+[Unit]
+Description=Prometheus Monitoring System
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+3. node_exporter.service (web1이 아래 예시이고, 나머지도 같은 설정임)
+
+```jsx
+[Unit]
+Description=Prometheus Node Exporter
+After=network.target
+
+[Service]
+User=node_exporter
+ExecStart=/usr/local/bin/node_exporter --collector.processes --collector.interrupts --collector.tcpstat --collector.systemd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+
+
 ---
 
 
