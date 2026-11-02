@@ -611,7 +611,7 @@ iptables -L FORWARD -n -v --line-numbers
 
 ---
 
-## 5. iptables 규칙
+## 5. iptables 규칙 테스트
 
 ```bash
 
@@ -650,7 +650,339 @@ iptables -t nat -D PREROUTING -i enp0s3 -d 192.168.0.235 -j DNAT --to-destinatio
 iptables -t nat -D POSTROUTING -s 192.168.56.101/32 -o enp0s3 -j SNAT --to-source 192.168.0.235
 iptables -t nat -D POSTROUTING -s 192.168.56.0/24 -o enp0s3 -j SNAT --to-source 192.168.0.236-192.168.0.238
 
+```bash
+1. 프로메테우스 구축(192.168.56.102)
+
+```jsx
+## 1. Prometheus 구축 (192.168.56.102)
+
+### 1-1. 서버 접속 및 사전 준비
+
+bash
+ssh root@192.168.56.102                        # Prometheus 서버 접속
+
+hostname                                       # 접속 서버 확인
+ip -br addr                                    # 192.168.56.102 인지 확인
+dnf install -y wget tar                        # 다운로드·압축 해제 도구 설치
+
+### 1-2. 사용자와 디렉터리 생성
+
+useradd --no-create-home --shell /bin/false prometheus   # 로그인 불가 서비스 전용 계정 생성
+mkdir -p /etc/prometheus                                 # 설정 파일 디렉터리
+mkdir -p /var/lib/prometheus                             # 수집 데이터(TSDB) 저장 디렉터리
+
+### 1-3. 다운로드 및 설치
+
+VER=3.5.0                                                # 설치할 버전 (GitHub releases에서 최신 확인)
+cd /tmp                                                  # 임시 디렉터리로 이동
+wget https://github.com/prometheus/prometheus/releases/download/v${VER}/prometheus-${VER}.linux-amd64.tar.gz   # 바이너리 다운로드
+tar xzf prometheus-${VER}.linux-amd64.tar.gz             # 압축 해제
+cd prometheus-${VER}.linux-amd64                         # 압축 푼 디렉터리로 이동
+
+cp prometheus promtool /usr/local/bin/                   # 실행 파일 복사 (promtool = 설정 검사 도구)
+cp prometheus.yml /etc/prometheus/                       # 기본 설정 파일 복사
+chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus   # 디렉터리 소유자를 prometheus 계정으로 변경
+restorecon -v /usr/local/bin/prometheus /usr/local/bin/promtool      # SELinux 보안 컨텍스트 재설정 (실행 거부 방지)
+prometheus --version                                     # 버전 확인
+
+### 1-4. systemd 서비스 등록
+
+## --web.listen-address=:9090으로 기본 포트 9090에서 실행합니다.
+
+# 서비스 파일 생성
+cat > /etc/systemd/system/prometheus.service <<'EOF'
+[Unit]
+Description=Prometheus
+After=network-online.target
+
+[Service]
+User=prometheus
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --web.listen-address=:9090
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload                        # 새 서비스 파일 인식
+systemctl enable --now prometheus              # 서비스 즉시 실행 + 부팅 시 자동 시작
+systemctl is-active prometheus                 # active여야 함
+ss -nltp | grep ':9090'                        # TCP 9090 포트 LISTEN 확인
+
+### 1-5. 방화벽 개방 및 접속 확인
+
+firewall-cmd --permanent --add-port=9090/tcp   # 9090 포트 영구 개방
+firewall-cmd --reload                          # 방화벽 설정 적용
+firewall-cmd --list-ports                      # 9090/tcp 가 보이면 정상
+curl -s localhost:9090/-/ready                 # "Prometheus Server is Ready." 출력 확인
+
+# 브라우저에서 `http://192.168.56.102:9090` 접속 시 Prometheus 화면이 나오면 완료입니다.
+
 ```
+
+1. Grafana 구축
+
+
+
+```jsx
+## 2. Grafana 구축 (192.168.56.106)
+
+### 2-1. 서버 접속
+
+ssh root@192.168.56.106                        # Grafana 서버 접속
+
+hostname                                       # 접속 서버 확인
+ip -br addr                                    # 192.168.56.106 인지 확인
+
+### 2-2. Grafana 저장소 등록
+
+# Grafana 공식 dnf 저장소 파일 생성
+cat > /etc/yum.repos.d/grafana.repo <<'EOF'
+[grafana]
+name=grafana
+baseurl=https://rpm.grafana.com
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=https://rpm.grafana.com/gpg.key
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+EOF
+
+dnf repolist | grep grafana                    # 저장소 등록 확인
+
+### 2-3. 설치 및 서비스 시작
+
+dnf install -y grafana                         # Grafana 패키지 설치
+grafana-server -v                              # 버전 확인
+systemctl daemon-reload                        # 서비스 파일 인식
+systemctl enable --now grafana-server          # 서비스 즉시 실행 + 부팅 시 자동 시작
+systemctl is-active grafana-server             # active여야 함
+ss -nltp | grep ':3000'                        # TCP 3000 포트 LISTEN 확인
+
+### 2-4. 방화벽 개방 및 접속 확인
+
+firewall-cmd --permanent --add-port=3000/tcp   # 3000 포트 영구 개방
+firewall-cmd --reload                          # 방화벽 설정 적용
+firewall-cmd --list-ports                      # 3000/tcp 가 보이면 정상
+
+## 브라우저에서 `http://192.168.56.106:3000` 접속 후 `admin / admin` 으로 로그인되면 완료
+```
+
+1. node_exporter 구축(web1~3, NAT, HAProxy, Nginx에서 각각 실행해주기)
+
+```jsx
+### 3-1. 한 서버에 접속하고 사전 준비
+
+# SSH 접근 가능한 관리 PC에서, 한 번에 하나씩 접속
+ssh root@192.168.56.100                        # NAT
+# ssh root@192.168.56.101                      # HAProxy & Nginx
+# ssh root@192.168.56.103                      # WEB1
+# ssh root@192.168.56.104                      # WEB2
+# ssh root@192.168.56.105                      # WEB3
+
+hostname                                       # 접속 서버 확인
+ip -br addr                                    # 해당 서버 IP 확인
+dnf install -y wget tar                        # 다운로드·압축 해제 도구 설치
+
+### 3-2. 서비스 전용 계정 생성
+
+useradd --no-create-home --shell /bin/false node_exporter   # 로그인 불가 서비스 전용 계정 생성
+id node_exporter                                            # 계정 생성 확인
+
+### 3-3. 다운로드 및 설치(exporter 프로그램을 서버에 놓기)
+
+VER=1.9.1                                                   # 설치할 버전 (GitHub releases에서 최신 확인)
+cd /tmp                                                     # 임시 디렉터리로 이동
+wget https://github.com/prometheus/node_exporter/releases/download/v${VER}/node_exporter-${VER}.linux-amd64.tar.gz   # 바이너리 다운로드
+tar xzf node_exporter-${VER}.linux-amd64.tar.gz             # 압축 해제
+cp node_exporter-${VER}.linux-amd64/node_exporter /usr/local/bin/   # 실행 파일 복사
+chown node_exporter:node_exporter /usr/local/bin/node_exporter      # 소유자를 전용 계정으로 변경
+restorecon -v /usr/local/bin/node_exporter                  # SELinux 보안 컨텍스트 재설정 (실행 거부 방지)
+node_exporter --version                                     # 버전 확인
+
+### 3-4. systemd 서비스 등록(exporter를 항상 켜져 있게 하기) 
+
+# 서비스 파일 생성 (기본 포트 9100에서 실행)
+cat > /etc/systemd/system/node_exporter.service <<'EOF'
+[Unit]
+Description=Node Exporter
+After=network-online.target
+
+[Service]
+User=node_exporter
+ExecStart=/usr/local/bin/node_exporter
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload                        # 새 서비스 파일 인식
+systemctl enable --now node_exporter           # 서비스 즉시 실행 + 부팅 시 자동 시작
+systemctl is-active node_exporter              # active여야 함
+ss -nltp | grep ':9100'                        # TCP 9100 포트 LISTEN 확인
+
+### 3-5. 방화벽 개방 및 동작 확인
+firewall-cmd --permanent --add-port=9100/tcp   # 9100 포트 영구 개방
+firewall-cmd --reload                          # 방화벽 설정 적용
+firewall-cmd --list-ports                      # 9100/tcp 가 보이면 정상
+curl -s localhost:9100/metrics | head          # 메트릭이 출력되면 정상
+exit
+
+### 3-6. 프로메테우스 서버에서 연결됐나 확인
+
+ssh root@192.168.56.102   #Prometheus 서버 접속
+
+# 5대 모두 9100 포트 응답 확인 (200이 5줄 나오면 정상)
+for ip in 100 101 103 104 105; do
+  curl -s -o /dev/null -w "192.168.56.$ip -> %{http_code}\n" http://192.168.56.$ip:9100/metrics
+done
+```
+
+1. 프로메테우스에 수집 대상 등록(192.168.56.102)
+
+```jsx
+### 4-1. 프로메테우스 서버 접속 및 기존 설정 백업
+
+ssh root@192.168.56.102                        # Prometheus 서버 접속
+
+hostname                                       # 접속 서버 확인
+cp /etc/prometheus/prometheus.yml /etc/prometheus/prometheus.yml.bak   # 기존 설정 파일 백업 (실수 시 복구용)
+
+### 4-2. prometheus.yml 작성(web, NAT, HAproxy & Nginx 등록)
+
+# 설정 파일 새로 작성
+cat > /etc/prometheus/prometheus.yml <<'EOF'
+global:
+  scrape_interval: 15s          # 15초마다 각 서버에서 데이터를 가져옴
+  evaluation_interval: 15s      # 15초마다 규칙(알림 등)을 계산
+
+scrape_configs:
+  # Prometheus 자기 자신 상태
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # 각 서버의 node_exporter (CPU·메모리·네트워크)
+  - job_name: "linux_servers"
+    static_configs:
+      - targets: ["192.168.56.100:9100"]     # NAT
+        labels:
+          server: "NAT"                      # 그래프에서 구분용 이름
+      - targets: ["192.168.56.101:9100"]     # HAProxy & Nginx
+        labels:
+          server: "HAProxy"
+      - targets: ["192.168.56.103:9100"]     # WEB1
+        labels:
+          server: "WEB1"
+      - targets: ["192.168.56.104:9100"]     # WEB2
+        labels:
+          server: "WEB2"
+      - targets: ["192.168.56.105:9100"]     # WEB3
+        labels:
+          server: "WEB3"
+EOF
+
+chown prometheus:prometheus /etc/prometheus/prometheus.yml   # 소유자를 prometheus 계정으로 변경
+
+### 4-3. 설정 검사 및 적용
+promtool check config /etc/prometheus/prometheus.yml   # 문법 검사, SUCCESS 나와야 함
+systemctl restart prometheus                           # 바뀐 설정 적용
+systemctl is-active prometheus                         # active여야 함
+ss -nltp | grep ':9090'                                # TCP 9090 포트 LISTEN 확인
+
+### 4-4.수집 대상들의 상태(up/down) 개수 확인 → "up" 6개면 정상 (Prometheus 자신 + 서버 5대)
+curl -s localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"' | sort | uniq -c
+
+### + 만약 down인 서버가 있다면 아래처럼 확인하기
+systemctl is-active node_exporter              # node_exporter가 실행 중인지 확인
+firewall-cmd --list-all                        # 9100 포트(또는 102 허용 규칙)가 열려 있는지 확인
+
+```
+
+1. Grafana에 prometheus 연결(데이터 소스 등록)
+
+```jsx
+### 5-1. Grafana 서버에서 Prometheus 접속 확인
+
+ssh root@192.168.56.106                        # Grafana 서버 접속
+
+hostname                                       # 접속 서버 확인
+curl -s http://192.168.56.102:9090/-/ready     # "Prometheus Server is Ready." 나오면 연결 가능
+
+### 5-2. 방법 A: 웹 화면에서 등록
+
+1. 브라우저에서 `http://192.168.56.106:3000` 접속 후 로그인
+2. 왼쪽 메뉴 **Connections → Data sources** 클릭
+3. **Add data source** → **Prometheus** 선택
+4. **Prometheus server URL** 칸에 `http://192.168.56.102:9090` 입력
+5. 맨 아래 **Save & test** 클릭
+6. “Successfully queried the Prometheus API.” 메시지가 나오면 완료
+
+### 5-3. 연결 확인
+
+1. Connections → Data sources에 Prometheus가 보이는지 확인
+2. 왼쪽 메뉴 Explore 클릭 → 데이터 소스 Prometheus 선택
+3. 쿼리 칸에 아래를 입력하고 Run query: up{job="linux_servers"}
+```
+
+#### 6-1. 대시보드 Import(우리는 id 1860)
+
+1. 브라우저에서 `http://192.168.56.106:3000` 접속 후 로그인
+2. 왼쪽 메뉴 **Dashboards** 클릭
+3. 오른쪽 위 **New → Import** 클릭
+4. **Find and import dashboards...** 칸에 `1860` 입력 → **Load** 클릭
+5. 대시보드 이름이 **Node Exporter Full**인지 확인
+6. 아래 **Prometheus** 선택 칸에서 5단계에서 등록한 `Prometheus` 선택
+7. **Import** 클릭 → 대시보드 화면이 열리면 완료
+
+6-2. 패널 추가
+
+```jsx
+###  4대 리소스
+
+# CPU 사용률
+
+100 - (avg by (instance) (rate(node_cpu_seconds_total{job="linux_servers",mode="idle"}[1m])) * 100)
+
+# 메모리 사용률
+
+(1 - node_memory_MemAvailable_bytes{job="linux_servers"} / node_memory_MemTotal_bytes{job="linux_servers"}) * 100
+
+# 디스크 사용률 (루트 파티션)
+
+100 - node_filesystem_avail_bytes{job="linux_servers",mountpoint="/"} / node_filesystem_size_bytes{job="linux_servers",mountpoint="/"} * 100
+
+# 네트워크 수신량
+
+sum by (instance)(rate(node_network_receive_bytes_total{job="linux_servers",device!="lo"}[1m]))
+```
+
+```jsx
+### 트래픽
+
+# NAT - A: 외부(enp0s3)에서 들어오는 트래픽
+rate(node_network_receive_bytes_total{instance="192.168.56.100:9100",device="enp0s3"}[1m])
+
+# NAT - B: 내부(enp0s8)로 나가는 트래픽
+rate(node_network_transmit_bytes_total{instance="192.168.56.100:9100",device="enp0s8"}[1m])
+
+# LB - A: HAProxy & Nginx로 들어오는 트래픽
+rate(node_network_receive_bytes_total{instance="192.168.56.101:9100",device!="lo"}[1m])
+
+# LB - B: HAProxy & Nginx에서 나가는 트래픽
+rate(node_network_transmit_bytes_total{instance="192.168.56.101:9100",device!="lo"}[1m])
+
+# WEB1~3: 각 웹 서버가 응답으로 보내는 트래픽
+rate(node_network_transmit_bytes_total{instance=~"192.168.56.10[3-5]:9100",device!="lo"}[1m])
+```
+
+---
+
 
 ## 6. 부하 테스트
 sudo dnf install epel-release
